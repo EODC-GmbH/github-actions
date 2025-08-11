@@ -1,0 +1,95 @@
+name: "rclone-move"
+description: "Move files with rclone"
+author: "Tom <tom.clark@eodc.eu>"
+
+inputs:
+  source_path:
+    description: Absolute source path
+    required: true
+  dest_path:
+    description: Rclone destination (e.g., remote:bucket/prefix or absolute path on runner)
+    required: true
+  transfers:
+    description: Number of parallel transfers
+    required: false
+    default: "6"
+  retries:
+    description: Max retries for failed transfers
+    required: false
+    default: "8"
+  size_only:
+    description: Use --size-only to decide if a file needs transferring
+    required: false
+    default: "true"
+  dry_run:
+    description: If true, perform a dry run. No data is moved
+    required: false
+    default: "false"
+  delete_empty_src_dirs:
+    description: Remove now-empty source directories after move
+    required: false
+    default: "true"
+  rclone_config:
+    description: Optional rclone config file contents (pass secrets.RCLONE_CONFIG)
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install rclone
+      shell: bash
+      run: |
+        set -euo pipefail
+        export DEBIAN_FRONTEND=noninteractive
+        if ! command -v rclone >/dev/null 2>&1; then
+          sudo apt-get install -y rclone
+        fi
+
+    - name: Configure rclone (optional)
+      if: ${{ inputs.rclone_config != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.config/rclone"
+        chmod 700 "$HOME/.config/rclone"
+        touch "$HOME/.config/rclone/rclone.conf"
+        printf '%s\n' "${{ inputs.rclone_config }}" > "$HOME/.config/rclone/rclone.conf"
+        chmod 600 "$HOME/.config/rclone/rclone.conf"
+
+    - name: Validate and run rclone move
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        src='${{ inputs.source_path }}'
+        dst='${{ inputs.dest_path }}'
+        transfers='${{ inputs.transfers }}'
+        max_retries='${{ inputs.retries }}'
+        use_size_only='${{ inputs.size_only }}'
+        dry='${{ inputs.dry_run }}'
+        del_empty='${{ inputs.delete_empty_src_dirs }}'
+
+        if ! [[ "$transfers" =~ ^[1-9][0-9]*$ ]]; then
+          echo "ERROR: transfers must be a positive integer (got '$transfers')." >&2
+          exit 2
+        fi
+        if ! [[ "$max_retries" =~ ^[0-9]+$ ]]; then
+          echo "ERROR: retries must must be a positive integer (got '$max_retries')." >&2
+          exit 4
+        fi
+        if [[ "$use_size_only" == "true" ]]; then
+          flags+=("--size-only")
+        fi
+        if [[ "$del_empty" == "true" ]]; then
+          flags+=("--delete-empty-src-dirs")
+        fi
+        if [[ "$dry" == "true" ]]; then
+          flags+=("--dry-run")
+        fi
+        
+        flags=("--progress" "--transfers" "$transfers" "--retries" "$max_retries")
+
+        echo "Running: rclone move \"$src\" \"$dst\" ${flags[*]}"
+        
+        rclone move "$src" "$dst" "${flags[@]}"
