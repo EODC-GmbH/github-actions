@@ -29,6 +29,14 @@ inputs:
     description: Remove now-empty source directories after move
     required: false
     default: "true"
+  include_pattern:
+    description: Optional comma-separated patterns to include (e.g., '*.txt,*.csv')
+    required: false
+    default: ""
+  exclude_pattern:
+    description: Optional comma-separated patterns to exclude (e.g., '*.log,*.tmp')
+    required: false
+    default: ""
   rclone_config:
     description: Optional rclone config file contents (pass secrets.RCLONE_CONFIG)
     required: false
@@ -62,6 +70,11 @@ runs:
       run: |
         set -euo pipefail
 
+        normalize_patterns() {
+          local input="$1"
+          printf '%s\n' "$input" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | awk 'NF'
+        }
+
         src='${{ inputs.source_path }}'
         dst='${{ inputs.dest_path }}'
         transfers='${{ inputs.transfers }}'
@@ -78,6 +91,21 @@ runs:
           echo "ERROR: retries must must be a positive integer (got '$max_retries')." >&2
           exit 4
         fi
+
+       # Add multiple --include
+        if [[ -n "$include_pattern" ]]; then
+          while IFS= read -r pat; do
+            flags+=("--include" "$pat")
+          done < <(normalize_patterns "$include_pattern")
+        fi
+        
+        # Add multiple --exclude
+        if [[ -n "$exclude_pattern" ]]; then
+          while IFS= read -r pat; do
+            flags+=("--exclude" "$pat")
+          done < <(normalize_patterns "$exclude_pattern")
+        fi
+        
         if [[ "$use_size_only" == "true" ]]; then
           flags+=("--size-only")
         fi
