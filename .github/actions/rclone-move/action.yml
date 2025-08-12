@@ -1,0 +1,186 @@
+# .github/actions/rclone-move/action.yml
+name: "rclone-move"
+description: "Move files with rclone"
+author: "Tom <tom.clark@eodc.eu>"
+inputs:
+  source_path:
+    description: Absolute source path
+    required: true
+  dest_path:
+    description: Rclone destination (e.g., remote:bucket/prefix or absolute path on runner)
+    required: true
+  transfers:
+    description: Number of parallel transfers
+    required: false
+    default: "6"
+  retries:
+    description: Max retries for failed transfers
+    required: false
+    default: "8"
+  size_only:
+    description: Use --size-only to decide if a file needs transferring
+    required: false
+    default: "true"
+  dry_run:
+    description: If true, perform a dry run. No data is moved
+    required: false
+    default: "false"
+  delete_empty_src_dirs:
+    description: Remove now-empty source directories after move
+    required: false
+    default: "true"
+  include_pattern:
+    description: Optional comma- or newline-separated patterns to include (e.g., "**/*.txt,**/*.csv")
+    required: false
+    default: ""
+  exclude_pattern:
+    description: Optional comma- or newline-separated patterns to exclude (e.g., "**/*.log,**/*.tmp")
+    required: false
+    default: ""
+  rclone_config:
+    description: Optional rclone config file contents (pass secrets.RCLONE_CONFIG)
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - name: Install rclone if missing
+      shell: bash
+      run: |
+        set -euo pipefail
+        export DEBIAN_FRONTEND=noninteractive
+        if ! command -v rclone >/dev/null 2>&1; then
+          sudo apt-get update -y
+          sudo apt-get install -y rclone
+        fi
+
+    - name: Configure rclone (optional)
+      if: ${{ inputs.rclone_config != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.config/rclone"
+        chmod 700 "$HOME/.config/rclone"
+        touch "$HOME/.config/rclone/rclone.conf"
+        printf '%s\n' "${{ inputs.rclone_config }}" > "$HOME/.config/rclone/rclone.conf"
+        chmod 600 "$HOME/.config/rclone/rclone.conf"
+
+    - name: Validate and run rclone move
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        normalize_patterns() {
+          # Splits by comma or newline, trims whitespace, strips surrounding single/double quotes.
+          # Accepts either comma-separated or multi-line inputs.
+          local input="$1"
+          printf '%s\n' "$input" \
+            | tr ',' '\n' \
+            | sed -e 's/^\s\+//' -e 's/\s\+$//' -e "s/^'\(.*\)'$/\1/" -e 's/^"\(.*\)"$/\1/' \
+            | awk 'NF'
+        }
+
+        rewrite_glob() {
+          # If the pattern has no directory separator but contains a glob, make it deep by prefixing **/
+          # Why: users often pass "*.ext" expecting a recursive match.
+          local pat="$1"
+          if [[ "$pat" != */* && "$pat" == *'*'* ]]; then
+            printf '%s\n' "**/$pat"
+          else
+            printf '%s\n' "$pat"
+          fi
+        }
+
+        src='${{ inputs.source_path }}'
+        dst='${{ inputs.dest_path }}'
+        transfers='${{ inputs.transfers }}'
+        max_retries='${{ inputs.retries }}'
+        use_size_only='${{ inputs.size_only }}'
+        dry='${{ inputs.dry_run }}'
+        del_empty='${{ inputs.delete_empty_src_dirs }}'
+        include_pattern='${{ inputs.include_pattern }}'
+        exclude_pattern='${{ inputs.exclude_pattern }}'
+
+        if ! [[ "$transfers" =~ ^[1-9][0-9]*$ ]]; then
+          echo "ERROR: transfers must be a positive integer (got '$transfers')." >&2
+          exit 2
+        fi
+        if ! [[ "$max_retries" =~ ^[0-9]+$ ]]; then
+          echo "ERROR: retries must be a non-negative integer (got '$max_retries')." >&2
+          exit 4
+        fi
+
+        # Base flags
+        flags=("--progress" "--transfers" "$transfers" "--retries" "$max_retries")
+
+        # Determine path relationship (only for local absolute paths)
+        dest_inside_src=false
+        if [[ "$src" == /* && "$dst" == /* ]]; then
+          src_real=$(realpath -m "$src")
+          dst_real=$(realpath -m "$dst")
+          if [[ "$dst_real" == "$src_real" ]]; then
+            echo "ERROR: destination path equals source path ($dst_real)." >&2
+            exit 6
+          fi
+          if [[ "$dst_real" == "$src_real"/* ]]; then
+            dest_inside_src=true
+          fi
+        fi
+
+        # Build a filter file (for include/exclude rules and to avoid recursion when needed)
+        filter_file=""
+        if [[ -n "$include_pattern" || -n "$exclude_pattern" || "$dest_inside_src" == true ]]; then
+          filter_file="$(mktemp)"
+          trap 'rm -f "$filter_file"' EXIT
+
+          # Allow directory traversal so deep globs can resolve (must be first)
+          printf '%s %s\n' '+' '/**/' >> "$filter_file"
+
+          # If destination is inside source, auto-exclude the destination subtree to prevent recursion
+          if [[ "$dest_inside_src" == true ]]; then
+            rel="${dst_real#$src_real/}"
+            printf '%s %s\n' '-' "/$rel/**" >> "$filter_file"
+          fi
+
+          # Excludes first so they override includes on first-match basis
+          if [[ -n "$exclude_pattern" ]]; then
+            while IFS= read -r raw; do
+              pat=$(rewrite_glob "$raw")
+              printf '%s %s\n' '-' "$pat" >> "$filter_file"
+            done < <(normalize_patterns "$exclude_pattern")
+          fi
+
+          # Includes next
+          if [[ -n "$include_pattern" ]]; then
+            while IFS= read -r raw; do
+              pat=$(rewrite_glob "$raw")
+              printf '%s %s\n' '+' "$pat" >> "$filter_file"
+            done < <(normalize_patterns "$include_pattern")
+          fi
+
+          # If includes exist, exclude everything else by default
+          if [[ -n "$include_pattern" ]]; then
+            printf '%s %s\n' '-' '*' >> "$filter_file"
+          fi
+
+          flags+=("--filter-from" "$filter_file")
+
+          {
+            echo '--- rclone filter rules ---'
+            cat "$filter_file"
+            echo '---------------------------'
+          } >&2
+        fi
+
+        if [[ "$use_size_only" == "true" ]]; then
+          flags+=("--size-only")
+        fi
+        if [[ "$del_empty" == "true" ]]; then
+          flags+=("--delete-empty-src-dirs")
+        fi
+        if [[ "$dry" == "true" ]]; then
+          flags+=("--dry-run")
+        fi
+
+        echo "Running: rclone move \"$src\" \"$dst\" ${flags[*]}"
+        rclone move "$src" "$dst" "${flags[@]}"

@@ -1,0 +1,31 @@
+name: YAML Format Check
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+permissions:
+  contents: read
+jobs:
+  yamlfmt:
+    # Run only in this repository and avoid running on forked PRs on self-hosted runners
+    if: github.repository == 'EODC-GmbH/github-actions' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.x'
+      - name: Install yamlfmt
+        run: |
+          go install github.com/google/yamlfmt/cmd/yamlfmt@latest
+      - name: Check YAML formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Lint mode: exit non-zero if formatting changes are needed
+          yamlfmt -lint -dstar "**/*.yml" "**/*.yaml"
