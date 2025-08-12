@@ -127,8 +127,8 @@ jobs:
 
 ### Nested paths safety
 
-- When the destination is inside the source (e.g., `src=/parent` and `dst=/parent/subdir`), the action automatically adds an exclude rule for the destination subtree to prevent recursion.
-- When the source is inside the destination (e.g., `src=/parent/.stage` and `dst=/parent`), no special handling is required; the move behaves as expected. Your include/exclude patterns are applied relative to `source_path`.
+- Destination inside source (e.g., `src=/parent` and `dst=/parent/subdir`): the action automatically adds an exclude rule for the destination subtree to prevent recursion so `rclone move` can proceed.
+- Source inside destination (e.g., `src=/parent/.stage` and `dst=/parent`): rclone forbids `move` between overlapping paths. Use `EODC-GmbH/github-actions/.github/actions/rclone-fake-move` for a safe emulation (copy+delete on a stable file list).
 
 ## Troubleshooting
 
