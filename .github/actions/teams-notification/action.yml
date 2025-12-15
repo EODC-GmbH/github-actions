@@ -1,3 +1,4 @@
+## Customised version of https://github.com/haroldelopez/ms-teams-notification-action/tree/master
 name: 'MS Teams Notification Action'
 description: 'Send a notification to Microsoft Teams for various events including pull requests and deployments'
 inputs:
