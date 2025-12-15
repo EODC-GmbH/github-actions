@@ -72,9 +72,9 @@ runs:
         # Build the facts array dynamically
         FACTS=$( cat <<EOF
         [
-        {\"title\": \"Repository\", \"value\": \"$REPO_NAME_ESCAPED\"},
-        {\"title\": \"Details\", \"value\": \"$MESSAGE_ESCAPED\"},
-        {\"title\": \"Workflow run\", \"value\": \"\<$URL_ESCAPED\>\"}
+          {"title": "Repository", "value": "$REPO_NAME_ESCAPED"},
+          {"title": "Details", "value": "$MESSAGE_ESCAPED"},
+          {"title": "Workflow run", "value": "<$URL_ESCAPED>"}
         ]
         EOF
         )
@@ -89,7 +89,7 @@ runs:
                 {
                     "type": "Action.OpenUrl",
                     "title": "View Workflow run",
-                    "iconUrl": $IMAGE,
+                    "iconUrl": "$IMAGE",
                     "url": "$URL_ESCAPED"
                 }
             ],
