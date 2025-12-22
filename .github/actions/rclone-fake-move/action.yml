@@ -52,7 +52,6 @@ runs:
           sudo apt-get update -y
           sudo apt-get install -y rclone
         fi
-
     - name: Configure rclone (optional)
       if: ${{ inputs.rclone_config != '' }}
       shell: bash
@@ -63,7 +62,6 @@ runs:
         touch "$HOME/.config/rclone/rclone.conf"
         printf '%s\n' "${{ inputs.rclone_config }}" > "$HOME/.config/rclone/rclone.conf"
         chmod 600 "$HOME/.config/rclone/rclone.conf"
-
     - name: Validate and emulate move
       shell: bash
       run: |
